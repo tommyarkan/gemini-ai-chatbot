@@ -1,0 +1,48 @@
+import os
+import uuid
+from flask import Flask, request, jsonify, send_from_directory
+from google import generativeai as genai
+from dotenv import load_dotenv
+
+load_dotenv()
+
+app = Flask(__name__, static_folder="static", static_url_path="/static")
+
+API_KEY = os.getenv("GEMINI_API_KEY")
+if not API_KEY:
+    raise RuntimeError("❌ Missing GEMINI_API_KEY in .env file")
+
+genai.configure(api_key=API_KEY)
+
+# In-memory sessions
+SESSIONS = {}
+
+@app.route("/")
+def index():
+    return send_from_directory("static", "index.html")
+
+@app.route("/chat", methods=["POST"])
+def chat():
+    data = request.json or {}
+    session_id = data.get("session_id") or str(uuid.uuid4())
+    user_msg = data.get("message", "").strip()
+    if not user_msg:
+        return jsonify({"error": "Message cannot be empty"}), 400
+
+    history = SESSIONS.setdefault(session_id, [])
+    history.append({"role": "user", "parts": [user_msg]})
+
+    model = genai.GenerativeModel("gemini-1.5-flash")
+
+    try:
+        chat = model.start_chat(history=history)
+        response = chat.send_message(user_msg)
+        reply = response.text.strip()
+        history.append({"role": "model", "parts": [reply]})
+    except Exception as e:
+        reply = f"Error: {str(e)}"
+
+    return jsonify({"session_id": session_id, "reply": reply})
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000)
